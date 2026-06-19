@@ -2,6 +2,8 @@ import os
 import re
 import logging
 from typing import List, Dict, Tuple, Optional
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from litellm import completion
 import asyncio
 import aiohttp
@@ -134,6 +136,13 @@ def _get_project_context() -> str:
     return "Proje yapısı:\n" + "\n".join(lines)
 
 # --- Unified LLM Interface ---
+@dataclass
+class ModelConfig:
+    name: str
+    api_key_env_var: str
+    base_url: Optional[str] = None
+    model_name: Optional[str] = None
+
 class UnifiedLLM:
     def __init__(self, config: ModelConfig):
         self.config = config
@@ -157,10 +166,7 @@ class UnifiedLLM:
     def get_model_name(self) -> str:
         return self.config.name
 
-# --- Model Configuration ---
-class ModelConfig:
-    def __init__(self, name: str, api_key_env_var: str, base_url: Optional[str] = None, model_name: Optional[str] = None):
-        self.name = name
-        self.api_key_env_var = api_key_env_var
-        self.base_url = base_url
-        self.model_name = model_name
+# --- Core Agent Class ---
+class MultiModelAgent:
+    def __init__(self):
+        self.models: List[
