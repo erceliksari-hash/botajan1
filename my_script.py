@@ -128,45 +128,4 @@ def _get_project_context() -> str:
         ext = os.path.splitext(f)[1]
         icon = icon_map.get(ext, "📄")
         summary = _extract_file_summary(os.path.join(CODE_DIR, f))
-        lines.append(f"  ├─ {icon} {f} — {summary}")
-
-    if len(files) > 8:
-        lines.append(f"  └─ ... ve {len(files) - 8} dosya daha.")
-
-    return "Proje yapısı:\n" + "\n".join(lines)
-
-# --- Unified LLM Interface ---
-@dataclass
-class ModelConfig:
-    name: str
-    api_key_env_var: str
-    base_url: Optional[str] = None
-    model_name: Optional[str] = None
-
-class UnifiedLLM:
-    def __init__(self, config: ModelConfig):
-        self.config = config
-        self.api_key = os.getenv(config.api_key_env_var)
-        if not self.api_key:
-            raise ValueError(f"API key not found for {config.name}")
-
-    async def generate_response(self, messages: List[Dict[str, str]], **kwargs) -> str:
-        try:
-            response = completion(
-                model=self.config.model_name or self.config.name,
-                messages=messages,
-                api_key=self.api_key,
-                **kwargs
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            logging.error(f"LLM error for {self.config.name}: {e}")
-            return f"❌ Hata: {str(e)}"
-
-    def get_model_name(self) -> str:
-        return self.config.name
-
-# --- Core Agent Class ---
-class MultiModelAgent:
-    def __init__(self):
-        self.models: List[
+        lines.append(f"  ├─ {icon} {f} — {summary
