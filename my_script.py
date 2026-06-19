@@ -1,112 +1,144 @@
-print('Hello world!')`\n"
-        "- `oku my_script.py`\n"
-        "- `revize et my_script.py`\n"
-        "- `sil my_script.py`\n"
-        "- `dosyaları listele`\n\n"
-        "_Not: dosya adlarında sadece harf, rakam, `_`, `-`, `.` kullanın (boşluksuz)._"
-    )
+import streamlit as st
+import os
+import logging
+import datetime
+import re
+from typing import List, Dict, Tuple, Optional
+from litellm import completion
 
-    st.subheader("Yüklenmiş Dosya Revizyonu")
-    if st.session_state.selected_file_for_revision:
-        line_count = len(st.session_state.loaded_file_content.splitlines())
-        st.info(f"Revize edilen dosya: **{st.session_state.selected_file_for_revision}** ({line_count} satır)")
-        with st.expander("Yüklenen dosya içeriği"):
-            st.code(st.session_state.loaded_file_content, language="python")
-            if line_count > core.MAX_CONTEXT_LINES:
-                st.caption(
-                    f"ℹ️ Bu dosya {line_count} satır. AI'a gönderilirken token tasarrufu için "
-                    f"yalnızca baş ve son {core.MAX_CONTEXT_LINES // 2}'şer satır gönderiliyor."
-                )
-        if st.button("Revizyonu Bitir / Dosyayı Kaldır"):
-            st.session_state.selected_file_for_revision = None
-            st.session_state.loaded_file_content = ""
-            st.session_state.pending_code_to_save = None
-            st.session_state.messages.append({"role": "assistant", "content": "Revizyon modu kapatıldı."})
-            st.rerun()
+# --- Logging Ayarları ---
+logging.basicConfig(
+    filename='agent.log',
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+
+# --- Configuration ---
+if "HF_TOKEN" not in os.environ and "HUGGINGFACE_API_KEY" in os.environ:
+    os.environ["HF_TOKEN"] = os.environ["HUGGINGFACE_API_KEY"]
+try:
+    if "HF_TOKEN" not in os.environ and "HF_TOKEN" in st.secrets:
+        os.environ["HF_TOKEN"] = st.secrets["HF_TOKEN"]
+except Exception:
+    pass
+
+CODE_DIR = "generated_code"
+if not os.path.exists(CODE_DIR):
+    os.makedirs(CODE_DIR)
+
+# Dosya adı geçerlilik kuralı: harf, rakam, alt çizgi, tire, nokta (boşluk/garip karakter yok)
+FILENAME_PATTERN = r"[\w\-]+\.\w+"
+MAX_CONTEXT_LINES = 100  # Prompt'a eklenirken büyük dosyaları özetlemek için sınır
+
+
+# --- Session State ---
+def init_session_state():
+    defaults = {
+        "messages": [],
+        "selected_file_for_revision": None,
+        "loaded_file_content": "",
+        "pending_code_to_save": None,
+        "agent": None,  # CodingAgent örneği burada saklanacak (her rerun'da yeniden oluşturmamak için)
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
+# --- Helper Functions ---
+def save_code_to_file(filename: str, code_content: str) -> str:
+    filename = os.path.basename(filename.strip())
+    filepath = os.path.join(CODE_DIR, filename)
+    overwriting = os.path.exists(filepath)
+    try:
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(code_content)
+        logging.info(f"Dosya {'üzerine yazıldı' if overwriting else 'kaydedildi'}: {filepath}")
+        if overwriting:
+            return f"♻️ '{filename}' zaten vardı, içeriği güncellendi (üzerine yazıldı)."
+        return f"✅ '{filename}' başarıyla kaydedildi."
+    except Exception as e:
+        logging.error(f"Dosya kaydetme hatası {filepath}: {e}")
+        return f"❌ Hata: {e}"
+
+
+def read_code_from_file(filename: str) -> Tuple[Optional[str], Optional[str]]:
+    filename = os.path.basename(filename.strip())
+    filepath = os.path.join(CODE_DIR, filename)
+    if not os.path.exists(filepath):
+        return None, f"❌ Dosya bulunamadı: {filename}"
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            return f.read(), None
+    except Exception as e:
+        logging.error(f"Okuma hatası {filepath}: {e}")
+        return None, f"❌ Okuma hatası: {e}"
+
+
+def list_generated_files() -> Tuple[List[str], Optional[str]]:
+    try:
+        files = [f for f in os.listdir(CODE_DIR) if os.path.isfile(os.path.join(CODE_DIR, f))]
+        return sorted(files), None
+    except Exception as e:
+        logging.error(f"Listeleme hatası: {e}")
+        return [], f"❌ Hata: {e}"
+
+
+def delete_file(filename: str) -> str:
+    filename = os.path.basename(filename.strip())
+    filepath = os.path.join(CODE_DIR, filename)
+    try:
+        os.remove(filepath)
+        logging.info(f"Dosya silindi: {filepath}")
+        return f"🗑️ '{filename}' silindi."
+    except Exception as e:
+        logging.error(f"Silme hatası {filepath}: {e}")
+        return f"❌ Hata: '{filename}' silinemedi: {e}"
+
+
+MAX_CONTEXT_FILES = 8       # Context'e dahil edilecek maks. dosya sayısı
+MAX_SUMMARY_CHARS = 90      # Her dosya özeti için karakter sınırı
+
+
+def _extract_file_summary(filepath: str) -> str:
+    """
+    Bir dosyanın içeriğine kısa bir göz atar ve LLM'in dosyanın ne işe
+    yaradığını anlamasına yardımcı olacak tek satırlık bir özet üretir.
+    Tüm içeriği context'e basmak yerine (token israfı) bu yeterli olur.
+    """
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            content = f.read(4000)  # Dosyanın başından küçük bir parça yeterli
+    except Exception:
+        return "(okunamadı)"
+
+    if filepath.endswith(".py"):
+        # Üst seviye fonksiyon/sınıf adlarını çıkar
+        names = re.findall(r"^(?:def|class)\s+(\w+)", content, re.MULTILINE)
+        if names:
+            summary = "tanımlar: " + ", ".join(names[:6])
+            if len(names) > 6:
+                summary += f" (+{len(names) - 6} daha)"
+            return summary[:MAX_SUMMARY_CHARS]
+        # Fonksiyon/sınıf yoksa dosyanın başındaki docstring veya yorumu dene
+        doc_match = re.search(r'"""(.*?)"""', content, re.DOTALL)
+        if doc_match:
+            return doc_match.group(1).strip().splitlines()[0][:MAX_SUMMARY_CHARS]
+        return "(boş veya betik kodu)"
     else:
-        st.info("Şu an bir dosya revize edilmiyor. `oku <dosya_adı>` veya `revize et <dosya_adı>` komutunu kullanın.")
+        # .md / .txt / .js gibi diğer dosyalar için ilk anlamlı satırı al
+        for line in content.splitlines():
+            line = line.strip()
+            if line:
+                return line[:MAX_SUMMARY_CHARS]
+        return "(boş dosya)"
 
-    st.subheader("Kaydedilen Dosyalar")
-    files, error = core.list_generated_files()
-    if error:
-        st.error(error)
-    elif files:
-        for f in files:
-            col1, col2 = st.columns([0.7, 0.3])
-            with col1:
-                st.text(f)
-            with col2:
-                content, _ = core.read_code_from_file(f)
-                if content is not None:
-                    st.download_button("⬇️", content, file_name=f, key=f"dl_{f}")
-    else:
-        st.text("Henüz kaydedilmiş dosya bulunmuyor.")
 
-    with st.expander("🗂️ AI'a Giden Proje Bağlamı"):
-        st.code(core.get_project_context(), language="text")
-
-    with st.expander("📜 Son Loglar"):
-        try:
-            with open("agent.log", "r", encoding="utf-8") as f:
-                log_lines = f.readlines()[-20:]
-            st.code("".join(log_lines) or "Henüz log yok.", language="text")
-        except FileNotFoundError:
-            st.text("Henüz log dosyası oluşmadı.")
-
-    if st.button("Sohbeti Temizle"):
-        st.session_state.messages = []
-        st.session_state.selected_file_for_revision = None
-        st.session_state.loaded_file_content = ""
-        st.session_state.pending_code_to_save = None
-        st.rerun()
-
-# --- Agent (session_state'te tutulur, her rerun'da yeniden oluşturulmaz) ---
-if st.session_state.agent is None:
-    st.session_state.agent = core.CodingAgent(selected_model_name, temperature, max_tokens)
-else:
-    st.session_state.agent.update_params(selected_model_name, temperature, max_tokens)
-agent: core.CodingAgent = st.session_state.agent
-
-# --- Sohbet Geçmişi ---
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-
-# --- Kullanıcı Girdisi ---
-prompt = st.chat_input("Kodlama komutunuzu girin veya bir dosya işlemi yapın...")
-if prompt:
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    st.session_state.pending_code_to_save = None
-
-    with st.spinner("Ajan düşünüyor..."):
-        result = agent.process_command(
-            prompt,
-            st.session_state.messages,
-            st.session_state.selected_file_for_revision,
-            st.session_state.loaded_file_content,
-        )
-
-    st.session_state.messages.append({"role": "assistant", "content": result.assistant_message})
-    if result.file_state_changed:
-        st.session_state.selected_file_for_revision = result.selected_file
-        st.session_state.loaded_file_content = result.loaded_content
-    st.session_state.pending_code_to_save = result.pending_save
-    st.rerun()
-
-# --- Üretilen Kodu Kaydetme Paneli ---
-if st.session_state.get("pending_code_to_save"):
-    code_info = st.session_state.pending_code_to_save
-    st.subheader("Üretilen Kodu Kaydet")
-    col1, col2 = st.columns([0.7, 0.3])
-    with col1:
-        new_filename = st.text_input("Dosya Adı:", value=code_info["filename"], key="save_filename_input")
-    with col2:
-        if st.button("Kodu Kaydet"):
-            if core.is_valid_filename(new_filename):
-                save_response = core.save_code_to_file(new_filename, code_info["content"])
-                st.session_state.messages.append({"role": "assistant", "content": save_response})
-                st.session_state.pending_code_to_save = None
-                st.rerun()
-            else:
-                st.error("Geçersiz dosya adı. Sadece harf, rakam, `_`, `-`, `.` kullanın (örn: app.py).")
-    st.code(code_info["content"], language="python") bu kodu incele hatalarini bul ve nasil calistirabilecegimi anlat
+def get_project_context() -> str:
+    """
+    Klasördeki dosyaları bir 'dosya ağacı' + kısa içerik özeti olarak döndürür.
+    Bu sayede LLM, sadece dosya adlarını değil her dosyanın ne işe yaradığını da görür.
+    Token maliyetini sınırlamak için dosya sayısı ve özet uzunluğu kısıtlanır.
+    """
+    try:
+        files = sorted(f for f in os.listdir(CODE_DIR
