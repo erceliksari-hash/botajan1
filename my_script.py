@@ -150,3 +150,20 @@ def get_project_context() -> str:
 
     if not files:
         return "Projede başka dosya yok."
+icon_map = {
+        ".py": "🐍",
+        ".js": "📜",
+        ".md": "📝",
+        ".txt": "📄"
+    }
+    
+    lines = ["Projedeki diğer dosyalar:"]
+    for f in files[:MAX_CONTEXT_FILES]:
+        icon = icon_map.get(os.path.splitext(f)[1], "📁")
+        summary = _extract_file_summary(os.path.join(CODE_DIR, f))
+        lines.append(f"  ├─ {icon} {f} — {summary}")
+        
+    if len(files) > MAX_CONTEXT_FILES:
+        lines.append(f"  └─ ... ve {len(files) - MAX_CONTEXT_FILES} dosya daha.")
+        
+    return "\n".join(lines)
