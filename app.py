@@ -225,7 +225,7 @@ TASK_TEMPLATES = [
     },
 ]
 
-with st.expander("🤝 AI Kardeşler — Hazır Görev Şablonları"):
+with st.expander("🤝 AI Kardeşler — Hazır Görev Şablonları", expanded=st.session_state.show_templates):
     if not st.session_state.selected_file_for_revision:
         st.caption(
             "ℹ️ Şu an revizyon modunda bir dosya yok. Önce `oku <dosya_adı>` ile bir dosya "
@@ -240,10 +240,92 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# --- Kullanıcı Girdisi ---
-prompt = st.chat_input("Kodlama komutunuzu girin veya bir dosya işlemi yapın...")
-if prompt:
-    run_agent_command(prompt)
+# --- Özel Tasarımlı Sohbet Kutusu ---
+# Görseldeki kutuyu (yuvarlak kenarlı, üstte placeholder, altta ikon satırı)
+# st.chat_input ile birebir yapamadığımız için st.form + CSS ile elden kuruyoruz.
+# "Website" etiketi -> şu an revize edilen dosyanın adı (varsa)
+# "+" -> AI Kardeşler panelini aç/kapat
+# "Plan" -> "Açıklamalı yanıt" anahtarı (isteğe AI'dan ekstra açıklama ister)
+# 🎤 -> şimdilik görsel (gerçek ses kaydı ayrı bir geliştirme gerektirir)
+st.markdown(
+    """
+    <style>
+    div[data-testid="stForm"] {
+        border: 1px solid #e3e3e3;
+        border-radius: 22px;
+        padding: 12px 16px 8px 16px;
+        background: #fafafa;
+    }
+    div[data-testid="stForm"] input[type="text"] {
+        border: none !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        font-size: 16px;
+    }
+    div[data-testid="stForm"] div[data-testid="stFormSubmitButton"] button {
+        border-radius: 999px;
+        border: 1px solid #e3e3e3;
+        padding: 4px 10px;
+        background: white;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+if "show_templates" not in st.session_state:
+    st.session_state.show_templates = False
+if "detailed_mode" not in st.session_state:
+    st.session_state.detailed_mode = False
+
+with st.form(key="custom_chat_form", clear_on_submit=True, border=False):
+    user_text = st.text_input(
+        "Komut",
+        placeholder="Kodlama komutunuzu girin veya bir dosya işlemi yapın...",
+        label_visibility="collapsed",
+        key="custom_chat_text",
+    )
+
+    file_tag = st.session_state.selected_file_for_revision
+    cols = st.columns([0.07, 0.30, 0.34, 0.13, 0.08, 0.08])
+
+    with cols[0]:
+        btn_plus = st.form_submit_button("➕", help="AI Kardeşler şablonlarını göster")
+    with cols[1]:
+        if file_tag:
+            btn_tag = st.form_submit_button(f"📄 {file_tag}  ✕", help="Revizyon dosyasını kaldır")
+        else:
+            st.caption("Dosya yok")
+            btn_tag = False
+    with cols[2]:
+        st.write("")  # boşluk - görseldeki sağa yaslanma için
+    with cols[3]:
+        st.session_state.detailed_mode = st.checkbox(
+            "Açıklamalı", value=st.session_state.detailed_mode, help="Yanıta ekstra açıklama eklenmesini iste"
+        )
+    with cols[4]:
+        btn_mic = st.form_submit_button("🎤", help="Sesli giriş (yakında)")
+    with cols[5]:
+        btn_send = st.form_submit_button("↑", type="primary", help="Gönder")
+
+if btn_plus:
+    st.session_state.show_templates = not st.session_state.show_templates
+    st.rerun()
+
+if btn_tag:
+    st.session_state.selected_file_for_revision = None
+    st.session_state.loaded_file_content = ""
+    st.session_state.pending_code_to_save = None
+    st.rerun()
+
+if btn_mic:
+    st.toast("🎤 Sesli giriş henüz eklenmedi — yakında!")
+
+if btn_send and user_text.strip():
+    final_text = user_text.strip()
+    if st.session_state.detailed_mode:
+        final_text += " (Lütfen kararlarını da kısaca açıkla.)"
+    run_agent_command(final_text)
 
 # --- Üretilen Kodu Kaydetme Paneli ---
 if st.session_state.get("pending_code_to_save"):
