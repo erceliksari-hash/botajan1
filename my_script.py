@@ -1,3 +1,5 @@
+# my_script.py
+
 import streamlit as st
 import os
 import logging
@@ -26,77 +28,125 @@ CODE_DIR = "generated_code"
 if not os.path.exists(CODE_DIR):
     os.makedirs(CODE_DIR)
 
+# Dosya adı geçerlilik kuralı: harf, rakam, alt çizgi, tire, nokta (boşluk/garip karakter yok)
+FILENAME_PATTERN = r"[\w\-]+\.\w+"
+MAX_CONTEXT_LINES = 100  # Prompt'a eklenirken büyük dosyaları özetlemek için sınır
+
+
+# --- Session State ---
+def init_session_state():
+    defaults = {
+        "messages": [],
+        "selected_file_for_revision": None,
+        "loaded_file_content": "",
+        "pending_code_to_save": None,
+        "agent": None,  # CodingAgent örneği burada saklanacak (her rerun'da yeniden oluşturmamak için)
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
 # --- Helper Functions ---
 def save_code_to_file(filename: str, code_content: str) -> str:
     filename = os.path.basename(filename.strip())
     filepath = os.path.join(CODE_DIR, filename)
-    with open(filepath, "w", encoding="utf-8") as f:
-        f.write(code_content)
-    return f"✅ '{filename}' başarıyla kaydedildi."
+    overwriting = os.path.exists(filepath)
+    try:
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(code_content)
+        logging.info(f"Dosya {'üzerine yazıldı' if overwriting else 'kaydedildi'}: {filepath}")
+        if overwriting:
+            return f"♻️ '{filename}' zaten vardı, içeriği güncellendi (üzerine yazıldı)."
+        return f"✅ '{filename}' başarıyla kaydedildi."
+    except Exception as e:
+        logging.error(f"Dosya kaydetme hatası {filepath}: {e}")
+        return f"❌ Hata: {e}"
+
 
 def read_code_from_file(filename: str) -> Tuple[Optional[str], Optional[str]]:
     filename = os.path.basename(filename.strip())
     filepath = os.path.join(CODE_DIR, filename)
     if not os.path.exists(filepath):
         return None, f"❌ Dosya bulunamadı: {filename}"
-    with open(filepath, "r", encoding="utf-8") as f:
-        return f.read(), None
-
-def list_generated_files() -> Tuple[List[str], Optional[str]]:
-    files = [f for f in os.listdir(CODE_DIR) if os.path.isfile(os.path.join(CODE_DIR, f))]
-    return sorted(files), None
-
-def _extract_file_summary(filepath: str) -> str:
     try:
         with open(filepath, "r", encoding="utf-8") as f:
-            content = f.read(2000)
-        if filepath.endswith(".py"):
-            names = re.findall(r"^(?:def|class)\s+(\w+)", content, re.MULTILINE)
-            return ("tanımlar: " + ", ".join(names[:4])) if names else "(py dosyası)"
-        return "dosya içeriği mevcut"
-    except:
+            return f.read(), None
+    except Exception as e:
+        logging.error(f"Okuma hatası {filepath}: {e}")
+        return None, f"❌ Okuma hatası: {e}"
+
+
+def list_generated_files() -> Tuple[List[str], Optional[str]]:
+    try:
+        files = [f for f in os.listdir(CODE_DIR) if os.path.isfile(os.path.join(CODE_DIR, f))]
+        return sorted(files), None
+    except Exception as e:
+        logging.error(f"Listeleme hatası: {e}")
+        return [], f"❌ Hata: {e}"
+
+
+def delete_file(filename: str) -> str:
+    filename = os.path.basename(filename.strip())
+    filepath = os.path.join(CODE_DIR, filename)
+    try:
+        os.remove(filepath)
+        logging.info(f"Dosya silindi: {filepath}")
+        return f"🗑️ '{filename}' silindi."
+    except Exception as e:
+        logging.error(f"Silme hatası {filepath}: {e}")
+        return f"❌ Hata: '{filename}' silinemedi: {e}"
+
+
+MAX_CONTEXT_FILES = 8       # Context'e dahil edilecek maks. dosya sayısı
+MAX_SUMMARY_CHARS = 90      # Her dosya özeti için karakter sınırı
+
+
+def _extract_file_summary(filepath: str) -> str:
+    """
+    Bir dosyanın içeriğine kısa bir göz atar ve LLM'in dosyanın ne işe
+    yaradığını anlamasına yardımcı olacak tek satırlık bir özet üretir.
+    Tüm içeriği context'e basmak yerine (token israfı) bu yeterli olur.
+    """
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            content = f.read(4000)  # Dosyanın başından küçük bir parça yeterli
+    except Exception:
         return "(okunamadı)"
 
+    if filepath.endswith(".py"):
+        # Üst seviye fonksiyon/sınıf adlarını çıkar
+        names = re.findall(r"^(?:def|class)\s+(\w+)", content, re.MULTILINE)
+        if names:
+            summary = "tanımlar: " + ", ".join(names[:6])
+            if len(names) > 6:
+                summary += f" (+{len(names) - 6} daha)"
+            return summary[:MAX_SUMMARY_CHARS]
+        # Fonksiyon/sınıf yoksa dosyanın başındaki docstring veya yorumu dene
+        doc_match = re.search(r'"""(.*?)"""', content, re.DOTALL)
+        if doc_match:
+            return doc_match.group(1).strip().splitlines()[0][:MAX_SUMMARY_CHARS]
+        return "(boş veya betik kodu)"
+    else:
+        # .md / .txt / .js gibi diğer dosyalar için ilk anlamlı satırı al
+        for line in content.splitlines():
+            line = line.strip()
+            if line:
+                return line[:MAX_SUMMARY_CHARS]
+        return "(boş dosya)"
+
+
 def get_project_context() -> str:
-    files = sorted(f for f in os.listdir(CODE_DIR) if f.endswith(('.py', '.js', '.md', '.txt')))
-    if not files: return "Projede başka dosya yok."
-    
-    icon_map = {".py": "🐍", ".js": "📜", ".md": "📝", ".txt": "📄"}
-    lines = ["Projedeki diğer dosyalar:"]
-    for f in files[:8]:
-        icon = icon_map.get(os.path.splitext(f)[1], "📁")
-        summary = _extract_file_summary(os.path.join(CODE_DIR, f))
-        lines.append(f"  ├─ {icon} {f} — {summary}")
-    return "\n".join(lines)
+    """
+    Klasördeki dosyaları bir 'dosya ağacı' + kısa içerik özeti olarak döndürür.
+    Bu sayede LLM, sadece dosya adlarını değil her dosyanın ne işe yaradığını da görür.
+    Token maliyetini sınırlamak için dosya sayısı ve özet uzunluğu kısıtlanır.
+    """
+    try:
+        files = sorted(f for f in os.listdir(CODE_DIR) if f.endswith(('.py', '.js', '.md', '.txt')))
+    except Exception as e:
+        logging.error(f"get_project_context hatası: {e}")
+        return "Proje dosyaları okunamadı."
 
-# --- AI Integration ---
-def get_llm_response(prompt_messages, model_name, **kwargs):
-    return completion(model=model_name, messages=prompt_messages, **kwargs).choices[0].message.content
-
-# --- Main App ---
-st.set_page_config(page_title="Pro-Coding Agent", layout="wide")
-if "messages" not in st.session_state: st.session_state.messages = []
-
-st.title("🚀 Pro-Coding Agent")
-
-# Chat UI
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-
-if prompt := st.chat_input("Kodlama komutunuzu girin..."):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"): st.markdown(prompt)
-    
-    with st.spinner("Ajan çalışıyor..."):
-        # Basit bir prompt hazırlığı
-        context = get_project_context()
-        sys_msg = f"Sen bir kodlama asistanısın. {context}"
-        messages = [{"role": "system", "content": sys_msg}] + st.session_state.messages
-        
-        try:
-            response = get_llm_response(messages, "huggingface/meta-llama/Llama-3.3-70B-Instruct")
-            st.session_state.messages.append({"role": "assistant", "content": response})
-            st.rerun()
-        except Exception as e:
-            st.error(f"Hata: {e}")
+    if not files:
+        return "Projede başka dosya yok."
