@@ -61,9 +61,9 @@ with st.sidebar:
         "🦙 Llama 3.3 70B (HF) — hata ayıklama": "huggingface/meta-llama/Llama-3.3-70B-Instruct",
         "🐱 Qwen2.5 Coder 32B (HF) — performans": "huggingface/Qwen/Qwen2.5-Coder-32B-Instruct",
         "⚡ Zephyr 7B Beta (HF) — hızlı analiz": "huggingface/HuggingFaceH4/zephyr-7b-beta",
-        "🧠 Claude Sonnet 4.6 (Anthropic) — mimari/kalite": "anthropic/claude-sonnet-4-6",
-        "✨ Gemini 3.5 Flash (Google) — bütüncül değerlendirme": "gemini/gemini-3.5-flash",
-        "🤖 GPT-5.4 mini (OpenAI) — okunabilirlik": "openai/gpt-5.4-mini",
+        "🧠 Claude 3.5 Sonnet (Anthropic) — mimari/kalite": "anthropic/claude-3-5-sonnet-20241022",
+        "✨ Gemini 2.0 Flash (Google) — bütüncül değerlendirme": "gemini/gemini-2.0-flash",
+        "🤖 GPT-4o mini (OpenAI) — okunabilirlik": "openai/gpt-4o-mini",
         "Özel model adı gir...": "custom",
     }
     selected_model_display = st.selectbox("Kullanılacak AI Modeli:", list(available_models.keys()))
@@ -230,12 +230,12 @@ TASK_TEMPLATES = [
     },
     {
         "label": "🧠 Claude'a Sor: Mimari ve Kod Kalitesi",
-        "model": "anthropic/claude-sonnet-4-6",
+        "model": "anthropic/claude-3-5-sonnet-20241022",
         "text": "Bu kodun mimari ve okunabilirlik açısından nasıl geliştirilebilir?",
     },
     {
         "label": "✨ Gemini'ye Sor: Genel Değerlendirme",
-        "model": "gemini/gemini-3.5-flash",
+        "model": "gemini/gemini-2.0-flash",
         "text": "Bu kodun tüm yönlerini değerlendir ve bütüncül iyileştirmeler öner.",
     },
 ]
