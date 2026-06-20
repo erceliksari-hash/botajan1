@@ -36,6 +36,8 @@ def init_session_state():
         "loaded_file_content": "",
         "pending_code_to_save": None,
         "agent": None,
+        "show_templates": False,   # AI Kardeşler paneli açık/kapalı
+        "detailed_mode": False,    # "Açıklamalı" anahtarı
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -98,18 +100,31 @@ with st.sidebar:
             env_name, provider_label = req
             st.warning(f"⚠️ '{provider_label}' için `{env_name}` ayarlanmamış. Yukarıdan ekleyebilirsin.")
 
-    st.info(
-        "Örnek komutlar:\n"
-        "- `Python'da 'Merhaba Dünya' yazan bir fonksiyon oluştur.`\n"
-        "- `kaydet my_script.py: print('Hello world!')`\n"
-        "- `oku my_script.py`\n"
-        "- `revize et my_script.py`\n"
-        "- `sil my_script.py`\n"
-        "- `dosyaları listele`\n\n"
-        "_Not: dosya adlarında sadece harf, rakam, `_`, `-`, `.` kullanın (boşluksuz)._\n\n"
-        "💡 Belirli bir modelden görev bazlı yardım istemek için aşağıdaki "
-        "**'🤝 AI Kardeşler'** panelindeki hazır şablonları kullanabilirsin."
-    )
+    EXAMPLE_COMMANDS = [
+        {"label": "🐍 Fonksiyon Oluştur", "text": "Python'da 'Merhaba Dünya' yazan bir fonksiyon oluştur."},
+        {"label": "🧪 Birim Testi Yaz", "text": "Bu dosya için pytest ile birim testleri (unit test) yaz."},
+        {"label": "📝 Docstring Ekle", "text": "Bu koddaki tüm fonksiyonlara açıklayıcı docstring ekle."},
+        {"label": "🐛 Hata Ayıkla", "text": "Bu kodda hata var mı kontrol et, varsa düzelt ve açıkla."},
+        {"label": "💾 Dosyaya Kaydet", "text": "kaydet ornek.py: print('Hello world!')"},
+        {"label": "📖 Dosya Oku", "text": "oku ornek.py"},
+        {"label": "✏️ Dosyayı Revize Et", "text": "revize et ornek.py"},
+        {"label": "🗑️ Dosyayı Sil", "text": "sil ornek.py"},
+        {"label": "📋 Dosyaları Listele", "text": "dosyaları listele"},
+    ]
+
+    with st.expander("💡 Örnek Komutlar (tıkla, sohbet kutusuna otomatik geçer)", expanded=False):
+        st.caption(
+            "_Dosya adlarında sadece harf, rakam, `_`, `-`, `.` kullanın (boşluksuz)._"
+        )
+        ex_cols = st.columns(2)
+        for i, ex in enumerate(EXAMPLE_COMMANDS):
+            with ex_cols[i % 2]:
+                if st.button(ex["label"], key=f"example_cmd_{i}", use_container_width=True):
+                    st.session_state["custom_chat_text"] = ex["text"]
+        st.caption(
+            "💡 Belirli bir modelden görev bazlı yardım istemek için aşağıdaki "
+            "**'🤝 AI Kardeşler'** panelindeki hazır şablonları da kullanabilirsin."
+        )
 
     st.subheader("Yüklenmiş Dosya Revizyonu")
     if st.session_state.selected_file_for_revision:
@@ -277,6 +292,8 @@ if "show_templates" not in st.session_state:
     st.session_state.show_templates = False
 if "detailed_mode" not in st.session_state:
     st.session_state.detailed_mode = False
+# (Not: bu ikisi artık init_session_state() içinde en başta ilkleniyor;
+#  burada tekrar tutuyoruz sadece güvenlik için - zarar vermez.)
 
 with st.form(key="custom_chat_form", clear_on_submit=True, border=False):
     user_text = st.text_input(
