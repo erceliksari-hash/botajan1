@@ -1,3 +1,5 @@
+# my_script.py
+
 import streamlit as st
 import os
 import logging
@@ -148,5 +150,3 @@ def get_project_context() -> str:
 
     if not files:
         return "Projede başka dosya yok."
-
-    icon_map = {
