@@ -1,3 +1,5 @@
+# my_script.py
+
 import streamlit as st
 import os
 import logging
@@ -34,6 +36,21 @@ def save_code_to_file(filename: str, code_content: str) -> str:
         return f"✅ '{filename}' başarıyla kaydedildi."
     except Exception as e:
         return f"❌ Hata: {e}"
+
+def read_code_from_file(filename: str) -> Tuple[Optional[str], Optional[str]]:
+    try:
+        filepath = os.path.join(CODE_DIR, os.path.basename(filename.strip()))
+        with open(filepath, "r", encoding="utf-8") as f:
+            return f.read(), None
+    except Exception as e:
+        return None, f"❌ Hata: {e}"
+
+def list_generated_files() -> Tuple[List[str], Optional[str]]:
+    try:
+        files = [f for f in os.listdir(CODE_DIR) if os.path.isfile(os.path.join(CODE_DIR, f))]
+        return sorted(files), None
+    except Exception as e:
+        return [], f"❌ Hata: {e}"
 
 def get_project_context() -> str:
     files = sorted(f for f in os.listdir(CODE_DIR) if f.endswith(('.py', '.js', '.md', '.txt')))
@@ -86,6 +103,9 @@ if prompt := st.chat_input("Kodlama komutunuzu girin..."):
 # SideBar - File Management
 with st.sidebar:
     st.header("Dosyalar")
-    files, _ = list_generated_files() # list_generated_files fonksiyonunu yukarıdaki gibi tanımlayabilirsin
-    for f in files:
-        st.text(f)
+    files, error = list_generated_files()
+    if error:
+        st.error(error)
+    else:
+        for f in files:
+            st.text(f)
