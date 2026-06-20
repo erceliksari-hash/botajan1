@@ -6,7 +6,6 @@ import logging
 import datetime
 import re
 from typing import List, Dict, Tuple, Optional
-from litellm import completion
 
 # --- Logging Ayarları ---
 logging.basicConfig(
@@ -150,3 +149,5 @@ def get_project_context() -> str:
 
     if not files:
         return "Projede başka dosya yok."
+
+    icon_map = {".py
